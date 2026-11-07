@@ -322,6 +322,7 @@ type authStepData struct {
 type authStep struct {
 	Service string
 	AuthID  string
+	SubType string
 	SMSMode smsMode
 }
 
@@ -342,6 +343,7 @@ func authStepFromData(data authStepData) authStep {
 
 	if selected != nil {
 		step.AuthID = selected.AuthID
+		step.SubType = selected.SubType
 		switch step.Service {
 		case "":
 			step.Service = selected.AuthType
@@ -350,7 +352,10 @@ func authStepFromData(data authStepData) authStep {
 			case "auth/totp", "auth/radius", "auth/challenge":
 				step.Service = selected.AuthType
 			case "auth/token":
-				if selected.SubType == "totp" {
+				// "totp" is plain TOTP; "https" is Sangfor's third-party HTTPS
+				// token auth. Both are served by the generic /auth/token step,
+				// which posts the token code like the official clients do.
+				if selected.SubType == "totp" || selected.SubType == "https" {
 					step.Service = "auth/totp"
 				}
 			}

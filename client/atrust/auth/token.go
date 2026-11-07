@@ -19,7 +19,7 @@ type tokenResponse struct {
 	Data    authStepData `json:"data"`
 }
 
-func (s *Session) completeTOTP() (authStep, error) {
+func (s *Session) completeTOTP(step authStep) (authStep, error) {
 	response := authchallenge.CodeResponse{}
 	if s.totpSecret != "" {
 		var err error
@@ -33,11 +33,33 @@ func (s *Session) completeTOTP() (authStep, error) {
 			Message:              "Please enter the TOTP token:",
 			CanSkipSecondaryAuth: true,
 		}
+		if step.SubType == "https" {
+			challenge.Message = "Please enter the token code:"
+		}
 		var err error
 		response, err = s.challengeHandler.HandleCodeChallenge(challenge)
 		if err != nil {
 			return authStep{}, fmt.Errorf("complete TOTP challenge: %w", err)
 		}
+	}
+
+	if step.SubType == "https" {
+		// Third-party HTTPS token auth. The official portal's customTokenAuth
+		// page posts {code, skipSecondaryAuth, taskId, authId} to the generic
+		// /auth/token endpoint; other field names make aTrust fail with 75500000.
+		skipSecondaryAuth := "0"
+		if response.SkipSecondaryAuth {
+			skipSecondaryAuth = "1"
+		}
+		payload := map[string]interface{}{
+			"code":              response.Code,
+			"skipSecondaryAuth": skipSecondaryAuth,
+			"taskId":            "",
+		}
+		if step.AuthID != "" {
+			payload["authId"] = step.AuthID
+		}
+		return s.submitToken(payload)
 	}
 
 	payload := map[string]interface{}{

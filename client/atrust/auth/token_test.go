@@ -22,6 +22,30 @@ func TestAuthStepFromTokenService(t *testing.T) {
 		t.Fatalf("unexpected token step: %+v", step)
 	}
 
+	step = authStepFromData(authStepData{
+		NextService: "auth/token",
+		NextServiceList: []authServiceInfo{{
+			AuthID:   "totp-id",
+			AuthType: "auth/token",
+			SubType:  "totp",
+		}},
+	})
+	if step.Service != "auth/totp" || step.AuthID != "totp-id" {
+		t.Fatalf("unexpected token step: %+v", step)
+	}
+
+	step = authStepFromData(authStepData{
+		NextService: "auth/token",
+		NextServiceList: []authServiceInfo{{
+			AuthID:   "https-token-id",
+			AuthType: "auth/token",
+			SubType:  "https",
+		}},
+	})
+	if step.Service != "auth/totp" || step.AuthID != "https-token-id" || step.SubType != "https" {
+		t.Fatalf("unexpected https token step: %+v", step)
+	}
+
 	step = authStepFromData(authStepData{NextService: "auth/sendSms"})
 	if step.Service != "auth/sms" || step.SMSMode != smsWithoutAuthID {
 		t.Fatalf("unexpected sendSms step: %+v", step)
@@ -95,8 +119,56 @@ func TestCompleteTOTPUsesStructuredChallengeResponse(t *testing.T) {
 			return authchallenge.CodeResponse{Code: "123456", SkipSecondaryAuth: true}, nil
 		},
 	}
-	if _, err := session.completeTOTP(); err != nil {
+	if _, err := session.completeTOTP(authStep{}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCompleteHTTPSAuthTokenUsesCustomTokenPayload(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/passport/v1/auth/token" {
+			t.Errorf("unexpected request path: %s", r.URL.Path)
+		}
+		var payload map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Error(err)
+		}
+		if payload["code"] != "123456" {
+			t.Errorf("unexpected code: %+v", payload)
+		}
+		if skip, ok := payload["skipSecondaryAuth"].(string); !ok || skip != "0" {
+			t.Errorf("unexpected skipSecondaryAuth: %+v", payload["skipSecondaryAuth"])
+		}
+		if payload["taskId"] != "" {
+			t.Errorf("unexpected taskId: %+v", payload["taskId"])
+		}
+		if payload["authId"] != "https-token-id" {
+			t.Errorf("unexpected authId: %+v", payload["authId"])
+		}
+		for _, forbidden := range []string{"action", "totpToken", "isPrevEffect", "username"} {
+			if _, ok := payload[forbidden]; ok {
+				t.Errorf("custom token payload unexpectedly included %s: %+v", forbidden, payload)
+			}
+		}
+		fmt.Fprint(w, `{"code":0,"data":{"nextService":"auth/accessCheck"}}`)
+	}))
+	defer server.Close()
+
+	session := newTLSTestSession(server)
+	session.challengeHandler = authchallenge.HandlerFuncs{
+		Code: func(challenge authchallenge.CodeChallenge) (authchallenge.CodeResponse, error) {
+			if challenge.Message != "Please enter the token code:" {
+				t.Errorf("unexpected challenge message: %s", challenge.Message)
+			}
+			return authchallenge.CodeResponse{Code: "123456"}, nil
+		},
+	}
+	step, err := session.completeTOTP(authStep{Service: "auth/totp", AuthID: "https-token-id", SubType: "https"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if step.Service != "auth/accessCheck" {
+		t.Fatalf("unexpected next step: %+v", step)
 	}
 }
 

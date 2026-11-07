@@ -285,7 +285,7 @@ func (s *Session) continueAuth(step authStep) error {
 		case "auth/customSms":
 			step, err = s.completeCustomSMS()
 		case "auth/totp":
-			step, err = s.completeTOTP()
+			step, err = s.completeTOTP(step)
 		case "auth/radius":
 			step, err = s.completeRadius("auth/token")
 		case "auth/challenge":
